@@ -18,9 +18,12 @@ Datasets are in the `datasets` directory:
   relatively wide spread of latencies. They are expected to cover a lot of
   different histogram buckets and thus to represent one of the more expensive
   real-world use cases.
-- TODO: A dataset with a relatively sharp peak from a service where each
-  request has approximately the same cost, ideally with an “outage” included
-  where some of the requests have a higher latency for a while.
+- `cortex-ingester.2m.20200326`: 2m (from 20:00 to 20:02 UTC) of processing
+  latencies from Cortex ingesters at Grafana Labs. The file contains 1,876,573
+  observations (16k qps on average). Since an ingestion is relatively uniform
+  in cost, the latencies have more narrow spread. In the only 2m the
+  observations were taken from, the system operated normally. During degraded
+  performance, the distribution of latencies would become less sharp.
 - TODO: SpamAssassin scores from my mailserver. The observation here are
   rounded to one decimal place, but they can be negative.
   
@@ -43,3 +46,21 @@ fits into a 1-byte varint (between –64 and 63). The largest delta (9240)
 requires a 3-byte varint. Since a 2-byte varint encodes ranges from –8192 to
 8191, all bucket counts (and in fact the whole histogram) are encodable in a
 varint-based delta encoding in less than 200 bytes.
+
+The `cortex-ingester.2m.20200326` dataset has almost 3x the number of
+observations, but uses only 78 buckets with a quite sharp maximum at index –78
+(approx. 112µs < x ≤ 126µs, 280941 observations). The buckets range from index
+–91 to –13, with all buckets in between except the one at index –15 having at
+least one observations. The largest count difference between consecutive
+buckets is 70867 (between index –81 and –80).
+
+Again, encoding the schema of used buckets is efficient as spans (two spans in
+this case: 76 consecutive buckets from –91, 2 consecutive buckets from
+–14). The largest delta between buckets needs 3 bytes as a varint, but even
+with the high observation count here, most deltas (45 out of 78) would fit into
+a 1-byte varint (between –64 and 63). The total histogram is thus encodable in
+a varint-based delta encoding in less than 150 bytes.
+
+On my laptop, it took the exposer 550ms to read in the dataset, parse it, and
+perform all the observations (300ns/observation). That's pretty decent for the
+ad-hoc code in client_golang.
