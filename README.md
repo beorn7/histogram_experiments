@@ -24,8 +24,12 @@ Datasets are in the `datasets` directory:
   in cost, the latencies have more narrow spread. In the only 2m the
   observations were taken from, the system operated normally. During degraded
   performance, the distribution of latencies would become less sharp.
-- TODO: SpamAssassin scores from my mailserver. The observation here are
-  rounded to one decimal place, but they can be negative.
+- `spamd.20190918`: SpamAssassin scores from 21,761 mails, collected between
+  2019-09-18 and 2020-04-01 (from the small mailserver I run for my
+  family). The observed values here are rounded to one decimal place, but they can
+  be negative. The distribution is fairly irregular. This dataset is intended
+  to test how well the histogram works with an atypical distribution, not
+  related to the usual request latency measurement.
   
 ## Observations
 
@@ -64,3 +68,12 @@ a varint-based delta encoding in less than 150 bytes.
 On my laptop, it took the exposer 550ms to read in the dataset, parse it, and
 perform all the observations (300ns/observation). That's pretty decent for the
 ad-hoc code in client_golang.
+
+The `spamd.20190918` dataset fills 63 different buckets, 45 positive buckets,
+17 negative buckets, and the “zero” bucket. Both the positive and negative
+buckets have each 6 separate spans of consecutive buckets. The gaps are in the
+range of small absolute values, which is caused by a ±0.1 delta corresponding
+to a multi-bucket jump with small absolute values. The fairly irregular
+distribution requires a 2-byte varint for about half of the deltas between
+bucket counts. Despite the much smaller number of observations, the histogram
+would again use approx. 150 bytes in its encoded form.
