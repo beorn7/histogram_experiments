@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,11 +43,16 @@ func observe(in io.Reader) {
 			log.Fatalln("Unexpected number of tokens in line", count, ":", len(ss))
 		}
 		// TODO: real-time mode that takes into account the timestamp ss[0].
-		duration, err := time.ParseDuration(ss[1])
-		if err != nil {
-			log.Fatalln("Could not parse duration in line", count, ":", err)
+		if duration, err := time.ParseDuration(ss[1]); err == nil {
+			his.Observe(duration.Seconds())
+		} else {
+			// It doesn't appear to be a duration. Try raw number.
+			v, err := strconv.ParseFloat(ss[1], 64)
+			if err != nil {
+				log.Fatalln("Could not parse value in line", count, ":", err)
+			}
+			his.Observe(v)
 		}
-		his.Observe(duration.Seconds())
 	}
 	if s.Err() != nil {
 		log.Fatalln("Could not complete reading dataset file:", s.Err())
