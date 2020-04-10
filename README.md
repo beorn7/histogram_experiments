@@ -33,7 +33,7 @@ Datasets are in the `datasets` directory:
   
 ## The basic idea
 
-The basic idea is to have an “infinite bucket” histogram with a regular
+The basic idea is to have an “infinite buckets” histogram with a regular
 logarithmic (or logarithmic-linear) bucketing schema and efficient handling of
 sparseness (i.e. empty buckets don't take any resources). This idea has been
 used in other implementations for quite some time, e.g. HDR Histogram,
@@ -41,10 +41,12 @@ circlllhist, more recently DDSketch, nicely described and compared in [a recent
 paper by Heinrich Hartmann and Theo
 Schlossnagle](https://arxiv.org/abs/2001.06561). Such an approach is
 conceptionally much simpler than a compressed “digest” approach, for which
-there is a huge body of research to study. In the context of Prometheus,
-certain conditions are different, see [my PromCon 2019
+there is a huge body of research to study. A digest approach is probably not
+feasible for the Prometheus context. Even a “sparse histogram” approach has to
+cope with certain Prometheus properties, see [my PromCon 2019
 talk](https://promcon.io/2019-munich/talks/prometheus-histograms-past-present-and-future/)
-for an overview.
+for an overview. This repository is essentially a playground to study how such
+an approach could work for Prometheus.
 
 The experimental approach so far is broadly the following:
 
