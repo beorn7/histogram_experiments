@@ -171,8 +171,12 @@ bytes of varint).
 Furthermore, 56 of the 112 buckets have a delta to their previous bucket that
 fits into a 1-byte varint (between –64 and 63). The largest delta (9240)
 requires a 3-byte varint. Since a 2-byte varint encodes ranges from –8192 to
-8191, all bucket counts (and in fact the whole histogram) are encodable in a
-varint-based delta encoding in less than 200 bytes.
+8191, all bucket counts are encodable in a varint-based delta encoding in less
+than 200 bytes.
+
+The protobuf encoding needs a bit of boilerplate around it (array sizes, field
+numbers, etc.), wich results in a wire size of the whole `Histogram` proto
+message of 317 bytes.
 
 The `cortex-ingester.2m.20200326` dataset has almost 3x the number of
 observations, but uses only 78 buckets with a quite sharp maximum at index –78
@@ -185,12 +189,13 @@ Again, encoding the schema of used buckets is efficient as spans (two spans in
 this case: 76 consecutive buckets from –91, 2 consecutive buckets from
 –14). The largest delta between buckets needs 3 bytes as a varint, but even
 with the high observation count here, most deltas (45 out of 78) would fit into
-a 1-byte varint (between –64 and 63). The total histogram is thus encodable in
-a varint-based delta encoding in less than 150 bytes.
+a 1-byte varint (between –64 and 63).
+
+The wire size of the whole `Histogram` proto message is 244 bytes.
 
 On my laptop, it took the exposer 550ms to read in the dataset, parse it, and
 perform all the observations (300ns/observation). That's pretty decent for the
-ad-hoc code in client_golang.
+ad-hoc implementation in client_golang.
 
 The `spamd.20190918` dataset fills 63 different buckets, 45 positive buckets,
 17 negative buckets, and the “zero” bucket. Both the positive and negative
@@ -198,5 +203,11 @@ buckets have each 6 separate spans of consecutive buckets. The gaps are in the
 range of small absolute values, which is caused by a ±0.1 delta corresponding
 to a multi-bucket jump with small absolute values. The fairly irregular
 distribution requires a 2-byte varint for about half of the deltas between
-bucket counts. Despite the much smaller number of observations, the histogram
-would again use approx. 150 bytes in its encoded form.
+bucket counts.
+
+The wire size of the whole `Histogram` proto message is 257 bytes.
+
+For comparison: The `Histogram` proto message for the conventional fixed-bucket
+Histogram in the [client_golang example
+app](https://github.com/prometheus/client_golang/blob/master/examples/random/main.go)
+has a size of 789 bytes for 11 buckets.
