@@ -116,18 +116,17 @@ Histogram.
     way that's efficient for negative numbers, too. (The deltas are expected to
     be negative about as often as positive.) In usual benign use cases, most of
     the count deltas should fit into a single byte.
-  - The “schema” of the buckets is encoded separately in one or more
-    spans of consecutive buckets. Each span contains the `offset` to the previous
-    span (or simply the starting bucket index for the first span) and then the
+  - The “schema” of the buckets is encoded separately in one or more spans of
+    consecutive buckets. Each span contains the `offset` to the previous span
+    (or simply the starting bucket index for the first span) and then the
     number of consecutive buckets (the `length` of the span). Neither uses any
     tricks with zero-basing to make it easier to read and understand, at the
-    cost of very few additional bits, i.e. a value of 0 or 1 for the `offset`
-    will never occur except for the 1st span (a span with `offset` 0 would be
-    identical, a span with `offset` 1 didn't need to be a separate span), and
-    likewise a span with `length` 0 would not make sense. With the span
-    encoding, histograms with mostly consecutive buckets are easy to
-    describe. As can be seen from the observations below, real-world histograms
-    have a lot of consecutive histograms.
+    cost of very few additional bits, i.e. a value of 0 for the `offset` will
+    never occur except possibly for the 1st span (a span with `offset` 0 didn't
+    need to be a separate span), and likewise a span with `length` 0 would not
+    make sense. With the span encoding, histograms with mostly consecutive
+    buckets are easy to describe. As can be seen from the observations below,
+    real-world histograms have a lot of consecutive histograms.
 	
 The buckets are indexed around 0, where 0 stands for the bucket with an upper
 bound of 1 (or a lower bound of –1 in the case of negative buckets). From
