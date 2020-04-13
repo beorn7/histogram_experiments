@@ -5,16 +5,21 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/url"
 	"os"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	"github.com/prometheus/prom2json"
 
 	dto "github.com/prometheus/client_model/go"
 )
 
-var usage = fmt.Sprintf(`Usage: %s [METRICS_PATH | METRICS_URL ]`, os.Args[0])
+var (
+	usage = fmt.Sprintf(`Usage: %s [METRICS_PATH | METRICS_URL ]`, os.Args[0])
+
+	decode = flag.Bool("decode", false, "Decode scraped histogram and dump to stdout.")
+)
 
 func main() {
 	flag.Parse()
@@ -67,8 +72,79 @@ func main() {
 						panic(err)
 					}
 					fmt.Println("- Bytes in Histogram message on the wire:", len(buf))
+					if *decode {
+						Dump(h, os.Stdout)
+					}
 				}
 			}
 		}
 	}
+}
+
+func Dump(h *dto.Histogram, o io.Writer) {
+	separator := "  ----------------------------------------------------------------------\n"
+	resolution := int32(h.GetSbResolution())
+	threshold := h.GetSbZeroThreshold()
+	bound := func(i int32) float64 {
+		var result float64
+		if i%resolution == 0 {
+			result = float64(math.Pow10(int(i / resolution)))
+		} else {
+			result = math.Pow(10, float64(i)/float64(resolution))
+		}
+		if result < threshold {
+			return threshold
+		}
+		return result
+	}
+	signedDump := func(negative bool) {
+		// This function assumes well behaved spans:
+		// - Only start a new one if really needed (i.e. an actual gap).
+		// - No zero length spans.
+		// - Total length of spans == length of deltas.
+		// A robust implementation should handle degenerate cases gracefully.
+		var (
+			lines    []string
+			curIdx   int32
+			deltaPos int
+			curCount int64
+		)
+		buckets := h.GetSbPositive()
+		if negative {
+			buckets = h.GetSbNegative()
+		}
+		for _, span := range buckets.GetSpan() {
+			curIdx += span.GetOffset()
+			if bound(curIdx-1) > threshold {
+				lines = append(lines, separator)
+			}
+			for nextIdx := curIdx + int32(span.GetLength()); curIdx < nextIdx; curIdx++ {
+				curCount += buckets.GetDelta()[deltaPos]
+				deltaPos++
+				if negative {
+					lines = append(lines, fmt.Sprintln(
+						" ", -bound(curIdx), "≤ x <", -bound(curIdx-1), "→", curCount,
+					))
+				} else {
+					lines = append(lines, fmt.Sprintln(
+						" ", bound(curIdx-1), "< x ≤", bound(curIdx), "→", curCount,
+					))
+				}
+			}
+		}
+		if negative {
+			for i := len(lines) - 1; i >= 0; i-- {
+				fmt.Fprint(o, lines[i])
+			}
+		} else {
+			for _, line := range lines {
+				fmt.Fprint(o, line)
+			}
+		}
+	}
+
+	fmt.Fprintln(o, "- Buckets:")
+	signedDump(true)
+	fmt.Fprintln(o, " ", -h.GetSbZeroThreshold(), "≤ x ≤", h.GetSbZeroThreshold(), "→", h.GetSbZeroCount())
+	signedDump(false)
 }
