@@ -51,12 +51,12 @@ an approach could work for Prometheus.
 The experimental approach so far is broadly the following:
 
 - Define a configurable “resolution”: the number of buckets per power of 10. So
-  far, a value of 20 seems to be a good trade-off. Note that keeping this
-  number the same over time allows merging of histograms, while changing it
-  disrupts that. The buckets are then spaced logarithmically, resulting in
-  “weird” bucket boundaries, but every power of 10 will also be a buckte
-  boundary (10ms, 100ms, 1s, 10s, …). (The circlllhist idea of spacing buckets
-  linearly within a power of 10 to have “round” numbers could easily be
+  far, a value between 20 and 100 seems to be a reasonable range. Note that
+  keeping this number the same over time allows merging of histograms, while
+  changing it disrupts that. The buckets are then spaced logarithmically,
+  resulting in “weird” bucket boundaries, but every power of 10 will also be a
+  buckte boundary (10ms, 100ms, 1s, 10s, …). (The circlllhist idea of spacing
+  buckets linearly within a power of 10 to have “round” numbers could easily be
   implemented in a very similar way.)
 - The bucketing schema is mirrored for negative observations.
 - Define a “zero bucket” with a fixed width. All observations with an absolute
@@ -88,7 +88,31 @@ buckets were populated, e.g. during degraded performance.
 
 Another approach to limiting the bucket count would be to dynamically widen the
 “zero bucket”, which is essentially what DDSketch is doing.
-  
+
+## Effect of resolution on the error of quantile estimation
+
+The observations below are valid for a resolution of 20 buckets per power of
+ten, with some additional observations for 100 buckets per power of ten.
+
+If φ-quantiles are estimated by choosing the [harmonic
+mean](https://en.wikipedia.org/wiki/Harmonic_mean) of the boundaries of the
+bucket they fall into, the relative error is guaranteed to be below 5.8% for a
+resolution of 20. For a resolution of 100, the max relative error is 1.2%.
+
+For log-linear buckets as in circlllhist (not implemented here, just for
+reference), the max relative error depends on which bucket within a power of 10
+the quantile falls into. circlllhist uses 90 linear buckets per power of 10, so
+that the boundaries coincide with round decimal numbers (e.g. 10ms, 11ms, 12ms,
+… , 99ms, 100ms, 110ms, 120ms, …). In the 1st bucket, the max error is 4.8%. In
+the last (90th) bucket, it is 0.5%.
+
+Note that the current implementation of `histogram_quantile` in Prometheus
+doesn't use the harmonic mean but interpolates the quantile, assuming a uniform
+distribution of observations within the bucket. This is expected to give on
+average better results for most real-world distributions, but more than doubles
+the possible worst-case relative error (e.g. 12.2% in case of a resolution of
+20).
+
 ## The exposition format
 
 A [branch of
@@ -155,6 +179,8 @@ and disappearing buckets.
   
 ## Observations
 
+_Remember that, if nothing else is stated, the used resolution is 20._
+
 With the very broad `cortex-querier.1h.20200309` dataset and a resolution (per
 power of 10) of 20, the resulting sparse histogram has 112 buckets, from index
 –80 (approx. 89.1µs < x ≤ 100µs) to index 31 (approx. 31.6s < x ≤ 35.5s). Every
@@ -177,6 +203,9 @@ The protobuf encoding needs a bit of boilerplate around it (array sizes, field
 numbers, etc.), wich results in a wire size of the whole `Histogram` proto
 message of 317 bytes.
 
+(With a resolution of 100, the histogram uses 535 buckets in 15 spans and needs
+1294 bytes on the wire.)
+
 The `cortex-ingester.2m.20200326` dataset has almost 3x the number of
 observations, but uses only 78 buckets with a quite sharp maximum at index –78
 (approx. 112µs < x ≤ 126µs, 280941 observations). The buckets range from index
@@ -196,6 +225,9 @@ On my laptop, it took the exposer 550ms to read in the dataset, parse it, and
 perform all the observations (300ns/observation). That's pretty decent for the
 ad-hoc implementation in client_golang.
 
+(With a resolution of 100, the histogram uses 355 buckets in 12 spans and needs
+898 bytes on the wire.)
+
 The `spamd.20190918` dataset fills 63 different buckets, 45 positive buckets,
 17 negative buckets, and the “zero” bucket. Both the positive and negative
 buckets have each 6 separate spans of consecutive buckets. The gaps are in the
@@ -205,6 +237,9 @@ distribution requires a 2-byte varint for about half of the deltas between
 bucket counts.
 
 The wire size of the whole `Histogram` proto message is 257 bytes.
+
+(With a resolution of 100, the histogram uses 175 buckets in 61 spans and needs
+788 bytes on the wire.)
 
 For comparison: The `Histogram` proto message for the conventional fixed-bucket
 Histogram in the [client_golang example

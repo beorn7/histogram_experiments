@@ -182,7 +182,9 @@ func DumpAndTrack(h *dto.Histogram, s *Storage, dump io.Writer) {
 		}
 	}
 
-	fmt.Fprintln(dump, "- Buckets:")
+	nBuckets := len(h.GetSbNegative().GetDelta()) + 1 + len(h.GetSbPositive().GetDelta())
+	nSpans := len(h.GetSbNegative().GetSpan()) + len(h.GetSbPositive().GetSpan())
+	fmt.Fprintln(dump, "-", nBuckets, "buckets /", nSpans, "spans:")
 	signedDump(true)
 	fmt.Fprintln(dump, " ", -h.GetSbZeroThreshold(), "≤ x ≤", h.GetSbZeroThreshold(), "→", h.GetSbZeroCount())
 	signedDump(false)
