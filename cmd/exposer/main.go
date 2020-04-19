@@ -21,6 +21,7 @@ var (
 	dataset       = flag.String("dataset", "", "input file to read datasat from")
 	resolution    = flag.Uint("resolution", 20, "sparse buckets resolution per power of 10, must be ≤255")
 	zeroThreshold = flag.Float64("zero-threshold", 1e-128, "width of the “zero” bucket")
+	timeFactor    = flag.Float64("time-factor", 0, "how fast to run the time simulation, 0 results in ingesting all observations as fast as possible")
 )
 
 func observe(in io.Reader) {
@@ -31,9 +32,10 @@ func observe(in io.Reader) {
 			SparseBucketsResolution:    uint8(*resolution),
 			SparseBucketsZeroThreshold: *zeroThreshold,
 		})
-		s     = bufio.NewScanner(in)
-		count = 0
-		start = time.Now()
+		s              = bufio.NewScanner(in)
+		count          = 0
+		start          = time.Now()
+		simulatedStart time.Time
 	)
 
 	for s.Scan() {
@@ -42,7 +44,18 @@ func observe(in io.Reader) {
 		if len(ss) != 2 {
 			log.Fatalln("Unexpected number of tokens in line", count, ":", len(ss))
 		}
-		// TODO: real-time mode that takes into account the timestamp ss[0].
+		ts, err := time.Parse(time.RFC3339Nano, ss[0])
+		if err != nil {
+			log.Fatalln("Cound not parse time stamp in line", count, ":", err)
+		}
+		if simulatedStart.IsZero() {
+			simulatedStart = ts
+		}
+		if *timeFactor > 0 {
+			desiredTimeOffset := time.Duration(float64(ts.Sub(simulatedStart)) / *timeFactor)
+			currentTimeOffset := time.Since(start)
+			time.Sleep(desiredTimeOffset - currentTimeOffset)
+		}
 		if duration, err := time.ParseDuration(ss[1]); err == nil {
 			his.Observe(duration.Seconds())
 		} else {
