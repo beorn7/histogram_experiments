@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -9,6 +10,8 @@ import (
 	"math"
 	"os"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -20,11 +23,37 @@ import (
 var (
 	usage = fmt.Sprintf(`Usage: %s METRICS_URL`, os.Args[0])
 
-	decode   = flag.Bool("decode", false, "Decode scraped histogram and dump to stdout.")
-	interval = flag.Duration("scrape-interval", 0, "If 0, scrape once and exit. Otherwise, continuously scrape with this interval.")
+	decode     = flag.Bool("decode", false, "Decode scraped histogram and dump to stdout.")
+	interval   = flag.Duration("scrape-interval", 0, "If 0, scrape once and exit. Otherwise, continuously scrape with this interval.")
+	bitBuckets bitBucketsFlag
 
 	storages = map[string]*Storage{} // A Storage for each histogram, keyed by name + string representation of labels.
 )
+
+func init() {
+	flag.Var(&bitBuckets, "bit-buckets", "Comma-separated list of bit bucket boundaries. (Gorilla uses '7,9,12,32' for timestamps, Prometheus 2 '14,17,20,64' for timestamps, Prometheus 1 '6,17,23' for timestamps and '6,13,20,33' for values.) If left empty, frequency of every occurring value is printed instead of a storage analysis.")
+}
+
+type bitBucketsFlag []int // Use int to use sort.Int.
+
+func (bbf *bitBucketsFlag) String() string {
+	return fmt.Sprint(*bbf)
+}
+
+func (bbf *bitBucketsFlag) Set(value string) error {
+	if len(*bbf) > 0 {
+		return errors.New("interval flag already set")
+	}
+	for _, bt := range strings.Split(value, ",") {
+		b, err := strconv.ParseUint(bt, 0, 8)
+		if err != nil {
+			return err
+		}
+		*bbf = append(*bbf, int(b))
+	}
+	sort.Ints(*bbf)
+	return nil
+}
 
 // Storage is a fake storage to collect some statistics about deltas of a single histogram.
 // It is not (yet) concerned about bucket schema changes.
@@ -32,6 +61,7 @@ type Storage struct {
 	Δp, Δn   map[int32]int64 // Last scraped deltas by index, for positive and negative buckets.
 	ΔΔp, ΔΔn map[int32]int64 // Delta of the two most recently scraped deltas by index, for positive and negative buckets.
 	ΔΔΔfreq  map[int64]uint  // Frequency of triple deltas by value for analysis.
+	n        uint            // Total number of scrapes.
 }
 
 func NewStorage() *Storage {
@@ -98,7 +128,11 @@ func Scrape(url string) {
 						}
 						DumpAndTrack(h, s, dump)
 						if *interval != 0 {
-							ReportDDDStats(s, os.Stdout)
+							if len(bitBuckets) == 0 {
+								ReportΔΔΔStats(s, os.Stdout)
+							} else {
+								ReportBitBucketStats(s, os.Stdout)
+							}
 						}
 					}
 				}
@@ -108,6 +142,7 @@ func Scrape(url string) {
 }
 
 func DumpAndTrack(h *dto.Histogram, s *Storage, dump io.Writer) {
+	s.n++
 	separator := "  ----------------------------------------------------------------------\n"
 	resolution := int32(h.GetSbResolution())
 	threshold := h.GetSbZeroThreshold()
@@ -191,14 +226,14 @@ func DumpAndTrack(h *dto.Histogram, s *Storage, dump io.Writer) {
 
 }
 
-func ReportDDDStats(s *Storage, o io.Writer) {
+func ReportΔΔΔStats(s *Storage, o io.Writer) {
 	var (
 		vals     []int
 		sum, cum uint
 	)
 
 	for val, count := range s.ΔΔΔfreq {
-		vals = append(vals, int(val)) // Convert to int just for ease of sorting.
+		vals = append(vals, int(val)) // Convert to int just for ease of sorting with sort.Ints.
 		sum += count
 	}
 	sort.Ints(vals)
@@ -209,4 +244,48 @@ func ReportDDDStats(s *Storage, o io.Writer) {
 		cum += count
 		fmt.Fprintf(o, "  %d → %d (%.2f%%)\n", val, count, float64(cum)/float64(sum)*100)
 	}
+}
+
+func ReportBitBucketStats(s *Storage, o io.Writer) {
+	bs := make([]uint, len(bitBuckets)+1)
+	limits := make([]int64, len(bitBuckets))
+	for i, bb := range bitBuckets {
+		limits[i] = 1 << (bb - 1)
+	}
+
+	var total uint
+Outer:
+	for val, count := range s.ΔΔΔfreq {
+		total += count
+		if val == 0 {
+			bs[0] += count
+			continue
+		}
+		for i, limit := range limits {
+			if val <= limit && val > -limit {
+				bs[i+1] += count
+				continue Outer
+			}
+		}
+		log.Fatalln("ΔΔΔ value", val, "doesn't fit into largest bit bucket.")
+	}
+
+	fmt.Fprintln(o, "- Bit bucket frequency:")
+	for i, b := range bs {
+		bits := 0
+		if i != 0 {
+			bits = bitBuckets[i-1]
+		}
+		fmt.Fprintf(o, "  %d bits → %d (%.2f%%)\n", bits, b, float64(b)/float64(total)*100)
+	}
+
+	totalBits := bs[0] // Each zero entry takes 1bit.
+	for i, bb := range bitBuckets {
+		bitsPerValue := i + 2 + bb
+		if i == len(bitBuckets)-1 {
+			bitsPerValue-- // Last bucket has one marker bit less.
+		}
+		totalBits += uint(bitsPerValue) * bs[i+1]
+	}
+	fmt.Fprintf(o, "  TOTAL storage size for ΔΔΔ values: %d bytes (%.1f bytes per scrape)\n", totalBits/8, float64(totalBits)/8/float64(s.n))
 }
