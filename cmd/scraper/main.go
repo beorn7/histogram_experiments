@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"log"
 	"math"
+	"math/bits"
 	"os"
 	"sort"
 	"strconv"
@@ -31,7 +32,7 @@ var (
 )
 
 func init() {
-	flag.Var(&bitBuckets, "bit-buckets", "Comma-separated list of bit bucket boundaries. (Gorilla uses '7,9,12,32' for timestamps, Prometheus 2 '14,17,20,64' for timestamps, Prometheus 1 '6,17,23' for timestamps and '6,13,20,33' for values.) If left empty, frequency of every occurring value is printed instead of a storage analysis.")
+	flag.Var(&bitBuckets, "bit-buckets", "Comma-separated list of bit bucket boundaries. (Gorilla uses '7,9,12,32' for timestamps, Prometheus 2 '14,17,20,64' for timestamps, Prometheus 1 '6,17,23' for timestamps and '6,13,20,33' for integer values.) Leave empty to print the frequency of every occurring value instead of a storage analysis. Use '0' to trigger a search for the best bucketing with one to four buckets.")
 }
 
 type bitBucketsFlag []int // Use int to use sort.Int.
@@ -130,8 +131,10 @@ func Scrape(url string) {
 						if *interval != 0 {
 							if len(bitBuckets) == 0 {
 								ReportΔΔΔStats(s, os.Stdout)
+							} else if bitBuckets[0] == 0 {
+								BruteForceBitBucketSearch(s, os.Stdout)
 							} else {
-								ReportBitBucketStats(s, os.Stdout)
+								ReportBitBucketStats(s, bitBuckets, os.Stdout)
 							}
 						}
 					}
@@ -246,7 +249,8 @@ func ReportΔΔΔStats(s *Storage, o io.Writer) {
 	}
 }
 
-func ReportBitBucketStats(s *Storage, o io.Writer) {
+// ReportBitBucketStats returns the total number of bits used.
+func ReportBitBucketStats(s *Storage, bitBuckets []int, o io.Writer) uint {
 	bs := make([]uint, len(bitBuckets)+1)
 	limits := make([]int64, len(bitBuckets))
 	for i, bb := range bitBuckets {
@@ -270,7 +274,7 @@ Outer:
 		log.Fatalln("ΔΔΔ value", val, "doesn't fit into largest bit bucket.")
 	}
 
-	fmt.Fprintln(o, "- Bit bucket frequency:")
+	fmt.Fprintf(o, "- Bit bucket frequency (%d buckets incl. zero bucket):\n", len(bitBuckets)+1)
 	for i, b := range bs {
 		bits := 0
 		if i != 0 {
@@ -288,4 +292,67 @@ Outer:
 		totalBits += uint(bitsPerValue) * bs[i+1]
 	}
 	fmt.Fprintf(o, "  TOTAL storage size for ΔΔΔ values: %d bytes (%.1f bytes per scrape)\n", totalBits/8, float64(totalBits)/8/float64(s.n))
+	return totalBits
+}
+
+func BruteForceBitBucketSearch(s *Storage, o io.Writer) {
+	var maxVal, minVal int64
+	for val := range s.ΔΔΔfreq {
+		if val < minVal {
+			minVal = val
+		} else if val > maxVal {
+			maxVal = val
+		}
+	}
+	largestBucket := bits.Len64(uint64(maxVal)) + 1
+	largestBucketForMin := bits.Len64(uint64(-minVal-1)) + 1
+	if largestBucketForMin > largestBucket {
+		largestBucket = largestBucketForMin
+	}
+	ReportBitBucketStats(s, []int{largestBucket}, o)
+
+	for numExtraBuckets := 1; numExtraBuckets < 5; numExtraBuckets++ {
+		BruteForceBitBucketSearchN(s, largestBucket, numExtraBuckets, o)
+	}
+}
+
+func BruteForceBitBucketSearchN(s *Storage, largestBucket int, numExtraBuckets int, o io.Writer) {
+	if numExtraBuckets >= largestBucket {
+		return // Cannot even fit that many buckets.
+	}
+
+	var (
+		currentBuckets, bestBuckets []int
+		bestBits                    uint = math.MaxUint32
+	)
+	for i := 1; i <= numExtraBuckets; i++ {
+		currentBuckets = append(currentBuckets, i)
+	}
+	currentBuckets = append(currentBuckets, largestBucket)
+
+	for next := true; next; next = IncrementBuckets(currentBuckets, len(currentBuckets)-2) {
+		bits := ReportBitBucketStats(s, currentBuckets, ioutil.Discard)
+		if bits < bestBits {
+			bestBits = bits
+			bestBuckets = append(bestBuckets[:0], currentBuckets...)
+		}
+	}
+	ReportBitBucketStats(s, bestBuckets, o)
+}
+
+func IncrementBuckets(b []int, p int) bool {
+	if b[p+1]-b[p] > 1 {
+		b[p]++
+		return true
+	}
+	if p == 0 {
+		return false
+	}
+	if b[p]-b[p-1] > 2 {
+		b[p] = b[p-1] + 2
+		for q := p + 1; q < len(b)-1; q++ {
+			b[q] = b[q-1] + 1
+		}
+	}
+	return IncrementBuckets(b, p-1)
 }
