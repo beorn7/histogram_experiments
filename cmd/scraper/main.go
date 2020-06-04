@@ -266,7 +266,7 @@ Outer:
 			continue
 		}
 		for i, limit := range limits {
-			if val <= limit && val > -limit {
+			if val < limit && val >= -limit {
 				bs[i+1] += count
 				continue Outer
 			}
@@ -296,7 +296,10 @@ Outer:
 }
 
 func BruteForceBitBucketSearch(s *Storage, o io.Writer) {
-	var maxVal, minVal int64
+	var (
+		maxVal int64 = 1
+		minVal int64 = -1
+	)
 	for val := range s.ΔΔΔfreq {
 		if val < minVal {
 			minVal = val
