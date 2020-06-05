@@ -26,10 +26,10 @@ Datasets are in the `datasets` directory:
   performance, the distribution of latencies would become less sharp.
 - `spamd.20190918`: SpamAssassin scores from 21,761 mails, collected between
   2019-09-18 and 2020-04-01 (from the small mailserver I run for my
-  family). The observed values here are rounded to one decimal place, but they can
-  be negative. The distribution is fairly irregular. This dataset is intended
-  to test how well the histogram works with an atypical distribution, not
-  related to the usual request latency measurement.
+  family). The observed values here are rounded to one decimal place, but they
+  can be negative. The distribution is fairly irregular. This dataset is
+  intended to test how well the histogram works with an atypical distribution,
+  not related to the usual request latency measurement.
   
 ## The basic idea
 
@@ -37,8 +37,8 @@ The basic idea is to have an “infinite buckets” histogram with a regular
 logarithmic (or logarithmic-linear) bucketing schema and efficient handling of
 sparseness (i.e. empty buckets don't take any resources). This idea has been
 used in other implementations for quite some time, e.g. HDR Histogram,
-circlllhist, more recently DDSketch, nicely described and compared in [a recent
-paper by Heinrich Hartmann and Theo
+circlllhist, and more recently DDSketch. For a detailed comparison, see [a
+recent paper by Heinrich Hartmann and Theo
 Schlossnagle](https://arxiv.org/abs/2001.06561). Such an approach is
 conceptionally much simpler than a compressed “digest” approach, for which
 there is a huge body of research to study. A digest approach is probably not
@@ -55,7 +55,7 @@ The experimental approach so far is broadly the following:
   keeping this number the same over time allows merging of histograms, while
   changing it disrupts that. The buckets are then spaced logarithmically,
   resulting in “weird” bucket boundaries, but every power of 10 will also be a
-  buckte boundary (10ms, 100ms, 1s, 10s, …). (The circlllhist idea of spacing
+  bucket boundary (10ms, 100ms, 1s, 10s, …). (The circlllhist idea of spacing
   buckets linearly within a power of 10 to have “round” numbers could easily be
   implemented in a very similar way.)
 - The bucketing schema is mirrored for negative observations.
@@ -71,20 +71,23 @@ improvement. Inspiration can be taken from open-source implementations of
 similar concepts, see above.
 
 The challenge of the Prometheus use case is that a monitored target cannot just
-collect observations for a fixed time frame and then sent it off for good to
-the metrics collection system. With Prometheus, monitored targets accumulate
-counts essentially forever and accept “stateless” scrapes from any number of
-scrapers. The assumption is, however, that with real-world observations, the
-number of used buckets will quickly approach a not too large number, so that
-resetting the histogram every minute is actually not so much different from
-never resetting it. The datasets provided in this repo are used to provide
-evidence for that assumption, see observations below.
+collect observations for a fixed time frame (like one minute) and then sent it
+off for good to the metrics collection system, after which all bucket counters
+can be reset to zero, reestablishing sparseness of the histogram. With
+Prometheus, monitored targets accumulate counts essentially forever and accept
+“stateless” scrapes from any number of scrapers. The histogram will become less
+and less sparse because of that, with more and more of the infinite number of
+buckets being used. The assumption is, however, that with real-world
+observations, the number of used buckets will quickly approach a not too large
+number, so that resetting a frequently updated histogram every minute is
+actually not so much different from never resetting it. The datasets provided
+in this repo are used to test that assumption, see observations below.
 
 Having said that, a very occasional (i.e. rare compared to the scrape interval)
-reset of a histogram is relatively harmless. For example, we could simply reset
-all histograms every hour, creating a relatively small loss of counts. That's
-particularly helpful if there was a short time span during which “exotic”
-buckets were populated, e.g. during degraded performance.
+reset of a histogram is relatively harmless. For example, with a typical scrape
+interval of 15s, resetting all histograms every hour would only lose 0.2% of
+counts. That's particularly helpful if there was a short time span during which
+“exotic” buckets were populated, e.g. during degraded performance.
 
 Another approach to limiting the bucket count would be to dynamically widen the
 “zero bucket”, which is essentially what DDSketch is doing.
@@ -97,21 +100,48 @@ ten, with some additional observations for 100 buckets per power of ten.
 If φ-quantiles are estimated by choosing the [harmonic
 mean](https://en.wikipedia.org/wiki/Harmonic_mean) of the boundaries of the
 bucket they fall into, the relative error is guaranteed to be below 5.8% for a
-resolution of 20. For a resolution of 100, the max relative error is 1.2%.
+resolution of 20. For a resolution of 100, the maximum relative error is
+1.2%. (Exception: Quantiles that fall into the “zero bucket”. Their absolute
+error is still bounded by the width of the “zero bucket”, but the relative
+error close to zero is inevitably approaching infinity.)
 
 For log-linear buckets as in circlllhist (not implemented here, just for
-reference), the max relative error depends on which bucket within a power of 10
-the quantile falls into. circlllhist uses 90 linear buckets per power of 10, so
-that the boundaries coincide with round decimal numbers (e.g. 10ms, 11ms, 12ms,
-… , 99ms, 100ms, 110ms, 120ms, …). In the 1st bucket, the max error is 4.8%. In
-the last (90th) bucket, it is 0.5%.
+reference), the maximum relative error depends on which bucket within a power
+of 10 the quantile falls into. circlllhist uses 90 linear buckets per power of
+10, so that the boundaries coincide with round decimal numbers (e.g. 10ms,
+11ms, 12ms, … , 99ms, 100ms, 110ms, 120ms, …). In the 1st bucket, the maximum
+error is 4.8%. In the last (90th) bucket, it is 0.5%.
 
-Note that the current implementation of `histogram_quantile` in Prometheus
-doesn't use the harmonic mean but interpolates the quantile, assuming a uniform
-distribution of observations within the bucket. This is expected to give on
-average better results for most real-world distributions, but more than doubles
-the possible worst-case relative error (e.g. 12.2% in case of a resolution of
-20).
+In the context of the quantile estimation error, there are a number of things
+to keep in mind:
+- The current implementation of `histogram_quantile` in Prometheus doesn't use
+  the harmonic mean but interpolates the quantile, assuming a uniform
+  distribution of observations within the bucket. This is expected to give on
+  average better results for most real-world distributions, but more than
+  doubles the possible worst-case relative error (e.g. 12.2% in case of a
+  resolution of 20).
+- The quantile estimation answers a question like: “What is the 99th percentile
+  latency?” However, often a slightly different question is more relevant:
+  “What is the percentage of requests served faster than 150ms?” The latter
+  question can be answered precisely with a bucket boundary at 150ms, which is
+  an important advantage of the exesting Prometheus Histograms, provided you
+  actually have set a bucket boundary at that value. It is also the main reason
+  behind circlllhist, which assumes that that question is usually asked with
+  round decimal numbers and therefore trades off a relatively high worst-case
+  error against the ability to answer that question precisely.
+- The estimation error discussed here so far is in the dimension of the sampled
+  values, e.g. “the 90th percentile latency is between 110ms and
+  120ms”. However, the error could also be measured in the φ dimension,
+  e.g. “115ms is between the 89th and 91st percentile latency”. The latter is
+  commonly used in papers about digest-like approaches, which interestingly
+  touches a problem of digest-like approaches for Prometheus use-cases: A
+  quantile estimation error like φ±0.01 looks great on paper, but if
+  calculating the 99th percentile, it boils down to a φ between 0.98 and
+  1.00. For the 99th percentile, it's between 0.989 to 1.009. In other words,
+  digest-like approaches usually struggle a lot if dealing with the common use
+  case of long-tail latencies, up to a point where the estimations are
+  completely useless. The bucketed approaches, on the other hand, are well
+  suited for distributions with a long tail.
 
 ## The exposition format
 
@@ -167,15 +197,30 @@ encoders and decoders in any protobuf-supported language.
 ## Storage
 
 The storage of the sparse histograms in a TSDB can utilize “triple-delta
-encoding”. The first delta is already included in the exposition format, see
-above. The usual double-delta encoding in the Prometheus TSDB can then be
+encoding”. The first delta (between buckets) is already included in the
+exposition format, see above. The usual double-delta encoding in the Prometheus
+TSDB, with the results being stored with variable bit length, can then be
 applied on those first deltas, resulting in triple-delta encoding. If you run
-the `scraper` program in the continuous scrape mode (TODO: to be implemented!),
-it reports an estimate how many bits saving the triple-deltas will take, using
-the existing bit-pattern schema in the Promtheus TSDB (TODO: explore other
-patterns). The details in the storage need to be fleshed out, in particular how
-to efficiently handle bucketing schema changes between scrapes, i.e. appearing
-and disappearing buckets.
+the `scraper` program in the continuous scrape mode, it reports an estimate how
+many bytes saving the triple-deltas will take, using configurable bit-length
+patterns, called _bit-buckets_ (but those buckets are unrelated to the buckets
+in the histogram). There is also a mode to automatically find the optimal
+bit-bucketing for the given data. (Incidentally, as a byproduct of my research,
+I found that Prometheus 2.x uses bit-buckets that are almost certainly
+sub-optimal.)
+
+The details in the storage need to be fleshed out, in particular how to
+efficiently handle bucketing schema changes between scrapes, i.e. appearing and
+disappearing buckets. The required storage bytes mentioned above are only for
+the triple-deltas, assuming that storing the bucketing schema will take a much
+smaller amount of space. A rough idea would be that every Prometheus TSDB chunk
+(which currently holds at most 120 samples, but that needs to be revisited
+anyway, not only for histograms) saves one bucketing schema that works for all
+samples in the chunk. As an additional optimization, buckets that never change
+throughout the chunk could be taken out of the schema, with their constant
+value saved as a single number. In that way, “exotic” buckets that rarely get
+updated (e.g. high latency buckets that only got updates during a short outage
+and then never again) will take even less space than the single bit per scrape.
   
 ## Observations
 
