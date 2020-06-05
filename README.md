@@ -137,7 +137,7 @@ to keep in mind:
   touches a problem of digest-like approaches for Prometheus use-cases: A
   quantile estimation error like φ±0.01 looks great on paper, but if
   calculating the 99th percentile, it boils down to a φ between 0.98 and
-  1.00. For the 99th percentile, it's between 0.989 to 1.009. In other words,
+  1.00. For the 99th percentile, it's between 0.989 and 1.009. In other words,
   digest-like approaches usually struggle a lot if dealing with the common use
   case of long-tail latencies, up to a point where the estimations are
   completely useless. The bucketed approaches, on the other hand, are well
@@ -248,8 +248,15 @@ The protobuf encoding needs a bit of boilerplate around it (array sizes, field
 numbers, etc.), wich results in a wire size of the whole `Histogram` proto
 message of 317 bytes.
 
+If the whole dataset is replayed in realtime over its full 1h length and the
+resulting histogram is scraped every 15s, the size of the triple-delta values
+is about 67 bytes per scraped histogram (0.60 bytes per bucket), using a
+bit-bucketing of 3/5/8 bits.
+
 (With a resolution of 100, the histogram uses 535 buckets in 15 spans and needs
-1294 bytes on the wire.)
+1294 bytes on the wire. The simulated scraping resulted in a size of the
+triple-delta values of about 243 bytes per scraped histogram (0.45 bytes per
+bucket), using a bit-bucketing of 3/5/7 bits.)
 
 The `cortex-ingester.2m.20200326` dataset has almost 3x the number of
 observations, but uses only 78 buckets with a quite sharp maximum at index –78
@@ -270,8 +277,19 @@ On my laptop, it took the exposer 550ms to read in the dataset, parse it, and
 perform all the observations (300ns/observation). That's pretty decent for the
 ad-hoc implementation in client_golang.
 
+The dataset has an extremely high frequency (merging together all requests from
+a distributed high-traffic system). To be closer to what a single histogram
+would receive (which would usually be per instance), the dataset is replayed at
+a tenth of the speed over 20m time. The resulting histogram is again scraped
+every 15s. The size of the triple-delta values is about 51 bytes per scraped
+histogram (0.65 bytes per bucket), using a bit-bucketing of 4/7/11 bits. The
+slightly higher numbers are expected due to the much more frequent
+observations.
+
 (With a resolution of 100, the histogram uses 355 buckets in 12 spans and needs
-898 bytes on the wire.)
+898 bytes on the wire. The simulated scraping resulted in a size of the
+triple-delta values of about 181 bytes per scraped histogram (0.51 bytes per
+bucket), using a bit-bucketing of 3/6/9 bits.)
 
 The `spamd.20190918` dataset fills 63 different buckets, 45 positive buckets,
 17 negative buckets, and the “zero” bucket. Both the positive and negative

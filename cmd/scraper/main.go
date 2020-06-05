@@ -314,7 +314,7 @@ func BruteForceBitBucketSearch(s *Storage, o io.Writer) {
 	}
 	ReportBitBucketStats(s, []int{largestBucket}, o)
 
-	for numExtraBuckets := 1; numExtraBuckets < 5; numExtraBuckets++ {
+	for numExtraBuckets := 1; numExtraBuckets < 4; numExtraBuckets++ {
 		BruteForceBitBucketSearchN(s, largestBucket, numExtraBuckets, o)
 	}
 }
