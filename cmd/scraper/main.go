@@ -24,9 +24,10 @@ import (
 var (
 	usage = fmt.Sprintf(`Usage: %s METRICS_URL`, os.Args[0])
 
-	decode     = flag.Bool("decode", false, "Decode scraped histogram and dump to stdout.")
-	interval   = flag.Duration("scrape-interval", 0, "If 0, scrape once and exit. Otherwise, continuously scrape with this interval.")
-	bitBuckets bitBucketsFlag
+	decode       = flag.Bool("decode", false, "Decode scraped histogram and dump to stdout.")
+	interval     = flag.Duration("scrape-interval", 0, "If 0, scrape once and exit. Otherwise, continuously scrape with this interval.")
+	storeBuckets = flag.Bool("store-bucket-count", false, "Rather than ΔΔ-encode the Δ-values of buckets, first reconstruct the absolute count of each bucket and ΔΔ-encode the latter.")
+	bitBuckets   bitBucketsFlag
 
 	storages = map[string]*Storage{} // A Storage for each histogram, keyed by name + string representation of labels.
 )
@@ -59,19 +60,32 @@ func (bbf *bitBucketsFlag) Set(value string) error {
 // Storage is a fake storage to collect some statistics about deltas of a single histogram.
 // It is not (yet) concerned about bucket schema changes.
 type Storage struct {
-	Δp, Δn   map[int32]int64 // Last scraped deltas by index, for positive and negative buckets.
-	ΔΔp, ΔΔn map[int32]int64 // Delta of the two most recently scraped deltas by index, for positive and negative buckets.
-	ΔΔΔfreq  map[int64]uint  // Frequency of triple deltas by value for analysis.
-	n        uint            // Total number of scrapes.
+	// Last scraped "first order" bucket count by
+	// index, for positive and negative buckets. If
+	// storeBuckets is set, this is absolute
+	// count. Otherwise, it is the Δ to the previous
+	// bucket.
+	p1, n1 map[int32]int64
+	// "Second order" bucket count, for positive and
+	// negative buckets. This is the Δ of the "first
+	// order" count between the last and the previous
+	// scrape.
+	p2, n2 map[int32]int64
+	// Frequency of "third order" counts. This is the
+	// Δ between the last and the previous "second
+	// order" count.
+	freq3 map[int64]uint
+	// Total number of scrapes.
+	n uint
 }
 
 func NewStorage() *Storage {
 	return &Storage{
-		Δp:      map[int32]int64{},
-		Δn:      map[int32]int64{},
-		ΔΔp:     map[int32]int64{},
-		ΔΔn:     map[int32]int64{},
-		ΔΔΔfreq: map[int64]uint{},
+		p1:    map[int32]int64{},
+		n1:    map[int32]int64{},
+		p2:    map[int32]int64{},
+		n2:    map[int32]int64{},
+		freq3: map[int64]uint{},
 	}
 }
 
@@ -130,7 +144,7 @@ func Scrape(url string) {
 						DumpAndTrack(h, s, dump)
 						if *interval != 0 {
 							if len(bitBuckets) == 0 {
-								ReportΔΔΔStats(s, os.Stdout)
+								ReportFrequencyStats(s, os.Stdout)
 							} else if bitBuckets[0] == 0 {
 								BruteForceBitBucketSearch(s, os.Stdout)
 							} else {
@@ -174,12 +188,12 @@ func DumpAndTrack(h *dto.Histogram, s *Storage, dump io.Writer) {
 			curCount = int64(h.GetSbZeroCount())
 		)
 		buckets := h.GetSbPositive()
-		Δold, ΔΔold := s.Δp, s.ΔΔp
+		old1, old2 := s.p1, s.p2
 		if negative {
 			buckets = h.GetSbNegative()
-			Δold, ΔΔold = s.Δn, s.ΔΔn
+			old1, old2 = s.n1, s.n2
 		}
-		Δnew, ΔΔnew := map[int32]int64{}, map[int32]int64{}
+		new1, new2 := map[int32]int64{}, map[int32]int64{}
 
 		for _, span := range buckets.GetSpan() {
 			curIdx += span.GetOffset()
@@ -187,14 +201,10 @@ func DumpAndTrack(h *dto.Histogram, s *Storage, dump io.Writer) {
 				lines = append(lines, separator)
 			}
 			for nextIdx := curIdx + int32(span.GetLength()); curIdx < nextIdx; curIdx++ {
-				Δ := buckets.GetDelta()[deltaPos]
+				bucketΔ := buckets.GetDelta()[deltaPos]
 				deltaPos++
-				Δnew[curIdx] = Δ
-				ΔΔ := Δ - Δold[curIdx]
-				ΔΔnew[curIdx] = ΔΔ
-				s.ΔΔΔfreq[ΔΔ-ΔΔold[curIdx]]++
+				curCount += bucketΔ
 
-				curCount += Δ
 				if negative {
 					lines = append(lines, fmt.Sprintln(
 						" ", -bound(curIdx), "≤ x <", -bound(curIdx-1), "→", curCount,
@@ -204,6 +214,28 @@ func DumpAndTrack(h *dto.Histogram, s *Storage, dump io.Writer) {
 						" ", bound(curIdx-1), "< x ≤", bound(curIdx), "→", curCount,
 					))
 				}
+
+				var timeΔ int64
+				o1, ok := old1[curIdx]
+
+				if *storeBuckets {
+					// Store bucket count and its Δ over time.
+					new1[curIdx] = curCount
+					if ok {
+						timeΔ = curCount - o1
+						new2[curIdx] = timeΔ
+					} else {
+						// 1st time we have a bucket count, store bucket Δ instead.
+						// Don't store a second-order count yet.
+						timeΔ = bucketΔ
+					}
+				} else {
+					// Store bucket Δ and its Δ over time.
+					new1[curIdx] = bucketΔ
+					timeΔ = bucketΔ - o1
+					new2[curIdx] = timeΔ
+				}
+				s.freq3[timeΔ-old2[curIdx]]++
 			}
 		}
 
@@ -211,12 +243,12 @@ func DumpAndTrack(h *dto.Histogram, s *Storage, dump io.Writer) {
 			for i := len(lines) - 1; i >= 0; i-- {
 				fmt.Fprint(dump, lines[i])
 			}
-			s.Δn, s.ΔΔn = Δnew, ΔΔnew
+			s.n1, s.n2 = new1, new2
 		} else {
 			for _, line := range lines {
 				fmt.Fprint(dump, line)
 			}
-			s.Δp, s.ΔΔp = Δnew, ΔΔnew
+			s.p1, s.p2 = new1, new2
 		}
 	}
 
@@ -229,21 +261,25 @@ func DumpAndTrack(h *dto.Histogram, s *Storage, dump io.Writer) {
 
 }
 
-func ReportΔΔΔStats(s *Storage, o io.Writer) {
+func ReportFrequencyStats(s *Storage, o io.Writer) {
 	var (
 		vals     []int
 		sum, cum uint
 	)
 
-	for val, count := range s.ΔΔΔfreq {
+	for val, count := range s.freq3 {
 		vals = append(vals, int(val)) // Convert to int just for ease of sorting with sort.Ints.
 		sum += count
 	}
 	sort.Ints(vals)
 
-	fmt.Fprintln(o, "- ΔΔΔ frequency:")
+	if *storeBuckets {
+		fmt.Fprintln(o, "- ΔΔ frequency:")
+	} else {
+		fmt.Fprintln(o, "- ΔΔΔ frequency:")
+	}
 	for _, val := range vals {
-		count := s.ΔΔΔfreq[int64(val)]
+		count := s.freq3[int64(val)]
 		cum += count
 		fmt.Fprintf(o, "  %d → %d (%.2f%%)\n", val, count, float64(cum)/float64(sum)*100)
 	}
@@ -259,7 +295,7 @@ func ReportBitBucketStats(s *Storage, bitBuckets []int, o io.Writer) uint {
 
 	var total uint
 Outer:
-	for val, count := range s.ΔΔΔfreq {
+	for val, count := range s.freq3 {
 		total += count
 		if val == 0 {
 			bs[0] += count
@@ -271,7 +307,7 @@ Outer:
 				continue Outer
 			}
 		}
-		log.Fatalln("ΔΔΔ value", val, "doesn't fit into largest bit bucket.")
+		log.Fatalln("3rd-order count", val, "doesn't fit into largest bit bucket.")
 	}
 
 	fmt.Fprintf(o, "- Bit bucket frequency (%d buckets incl. zero bucket):\n", len(bitBuckets)+1)
@@ -291,7 +327,7 @@ Outer:
 		}
 		totalBits += uint(bitsPerValue) * bs[i+1]
 	}
-	fmt.Fprintf(o, "  TOTAL storage size for ΔΔΔ values: %d bytes (%.1f bytes per scrape)\n", totalBits/8, float64(totalBits)/8/float64(s.n))
+	fmt.Fprintf(o, "  TOTAL storage size for ΔΔ(Δ) values: %d bytes (%.1f bytes per scrape)\n", totalBits/8, float64(totalBits)/8/float64(s.n))
 	return totalBits
 }
 
@@ -300,7 +336,7 @@ func BruteForceBitBucketSearch(s *Storage, o io.Writer) {
 		maxVal int64 = 1
 		minVal int64 = -1
 	)
-	for val := range s.ΔΔΔfreq {
+	for val := range s.freq3 {
 		if val < minVal {
 			minVal = val
 		} else if val > maxVal {
