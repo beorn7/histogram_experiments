@@ -124,7 +124,7 @@ to keep in mind:
   latency?” However, often a slightly different question is more relevant:
   “What is the percentage of requests served faster than 150ms?” The latter
   question can be answered precisely with a bucket boundary at 150ms, which is
-  an important advantage of the exesting Prometheus Histograms, provided you
+  an important advantage of the existing Prometheus Histograms, provided you
   actually have set a bucket boundary at that value. It is also the main reason
   behind circlllhist, which assumes that that question is usually asked with
   round decimal numbers and therefore trades off a relatively high worst-case

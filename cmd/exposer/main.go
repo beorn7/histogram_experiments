@@ -46,7 +46,7 @@ func observe(in io.Reader) {
 		}
 		ts, err := time.Parse(time.RFC3339Nano, ss[0])
 		if err != nil {
-			log.Fatalln("Cound not parse time stamp in line", count, ":", err)
+			log.Fatalln("Could not parse time stamp in line", count, ":", err)
 		}
 		if simulatedStart.IsZero() {
 			simulatedStart = ts
