@@ -290,6 +290,10 @@ func ReportBitBucketStats(s *Storage, bitBuckets []int, o io.Writer) uint {
 	bs := make([]uint, len(bitBuckets)+1)
 	limits := make([]int64, len(bitBuckets))
 	for i, bb := range bitBuckets {
+		if bb == 64 {
+			limits[i] = math.MaxInt64
+			continue
+		}
 		limits[i] = 1 << (bb - 1)
 	}
 
