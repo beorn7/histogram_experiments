@@ -1,4 +1,4 @@
-# ingester, 20m data collection (slow-down 10x)
+# ingester, 20m data collection (slow-down 10x), 15s scrape interval (80 scrapes)
 
 ## resolution=20
 
@@ -96,7 +96,7 @@ Triple:
   64 bits → 0 (0.00%)
   TOTAL storage size for ΔΔ(Δ) values: 14883 bytes (183.7 bytes per scrape)
 
-# querier, 1h data collection
+# querier, 1h data collection, 15s scrape interval (240 scrapes)
 
 ## resolution=20
 
