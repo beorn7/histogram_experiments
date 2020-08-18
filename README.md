@@ -5,7 +5,7 @@ repository provides two tools:
 
 1. `exposer`: Reads in observations from a dataset and exposes them in a
    histogram.
-2. `scraper`: Scrapes a target with histograms (usally `exposer`) and prints
+2. `scraper`: Scrapes a target with histograms (usually `exposer`) and prints
    out stats about it.
 
 ## The datasets
@@ -164,7 +164,7 @@ Histogram.
 - Sparse buckets for negative and positive buckets are then represented in a
   `SparseBuckets` message each. If there are no negative or positive
   observations, the respective message is left empty.
-- Each `SpareBuckets` message contains the following:
+- Each `SparseBuckets` message contains the following:
   - The delta-encoded counts in the buckets, i.e. each value is the difference
     to the previous bucket (or to zero in case of the first bucket), assuming
     that those differences are smaller than absolute numbers in most real-world
@@ -191,14 +191,14 @@ increment by the resolution value corresponds to a power of 10.
 
 Note that an even more efficient encoding could be reached with a
 “varbit”-style encoding as it is done within the Prometheus TSDB. However, I
-assume the usual varint encoding as used by protobuf is a good tradeoff between
+assume the usual varint encoding as used by protobuf is a good trade-off between
 size on the wire and cost of encoding and decoding. Implementing the whole
 encoding schema in protobuf also has the advantage that it is easy to create
 encoders and decoders in any protobuf-supported language.
 
 ## Storage
 
-Fundamentally, a single “sample value” of a sparse histogrem is considered to
+Fundamentally, a single “sample value” of a sparse histogram is considered to
 be the whole set of buckets, i.e. only one index entry per histogram, not per
 bucket, and ingestion of all buckets in one go, without multiplexing to one
 sample stream per bucket.
@@ -212,7 +212,7 @@ the chunk: The bucket deltas could be encoded using the same double-delta
 encoding as already used for timestamps (which also was used by Prometheus 1
 for sample values that are integer numbers). As that double-delta encodes the
 bucket deltas, I call it “triple-delta encoding”. The other option is to
-reconstruct the absolut bucket counts from the bucket deltas in the exposition
+reconstruct the absolute bucket counts from the bucket deltas in the exposition
 format and then double-delta encode those absolute counts, resulting in
 “normal” double-delta encoding, but still with the difference that all bucket
 counts of a histogram are encoded in one sample (rather than multiplexed into
@@ -228,7 +228,7 @@ anyway. A few more additions of integers during decoding should hardly make a
 dent.
 
 With either option, the resulting triple or double deltas are encoded with a
-variable bitwidht schema as used already in the Prometheus TSDB.
+variable bitwidth schema as used already in the Prometheus TSDB.
 
 If you run the `scraper` program in the continuous scrape mode, it reports an
 estimate how many bytes saving the triple deltas or double deltas (the latter
@@ -279,7 +279,7 @@ requires a 3-byte varint. Since a 2-byte varint encodes ranges from –8192 to
 than 200 bytes.
 
 The protobuf encoding needs a bit of boilerplate around it (array sizes, field
-numbers, etc.), wich results in a wire size of the whole `Histogram` proto
+numbers, etc.), which results in a wire size of the whole `Histogram` proto
 message of 317 bytes.
 
 With a resolution of 100, the histogram uses 535 buckets in 15 spans and needs
@@ -366,7 +366,7 @@ most important conclusions:
   for a resolution of 20. With the high resolution of 100, it is about the same
   for the ingester dataset and about 5% worse for the querier dataset. Thus,
   there is no clear winner, but the triple delta encoding seems to generally fare
-  better. Since the triple delta encoding is also chepare during ingestion (and
+  better. Since the triple delta encoding is also cheaper during ingestion (and
   all data is ingested once but most likely read less than once on average),
   I'm inclined to pick triple delta encoding for now.
 - Bucketing for the varbit encoding: The simulations have calculated ideal bit
@@ -375,7 +375,7 @@ most important conclusions:
   regular Prometheus sample and timestamp encoding!), but for the time being,
   we should probably pick a “one size fits it all” bitbucketing. I picked a
   3/6/9/12/64 bucketing as the one being in the middle of the calculated ideal
-  bucketing schemas (with the added 64 bit bucket to be used extremely rarely
+  bucketing schema (with the added 64 bit bucket to be used extremely rarely
   for outliers).
 - 30% to 50% of delta values are zero. No analysis has been performed on how
   often there are streaks of consecutive zeros. Those would benefit from a
@@ -383,7 +383,7 @@ most important conclusions:
   potential gain is much lower than it naively appears. The broader bit buckets
   take much more space. With the marker bits included, each entry in the 3bit
   bucket takes 5bit, in the 6bit bucket 9bit, and in the 9bit bucket 13bit. For
-  example, a typical distributon of 40% in the 0bit bucket, 30% in the 3bit
+  example, a typical distribution of 40% in the 0bit bucket, 30% in the 3bit
   bucket, 20% in the 6bit bucket, and 10% in the 9bit bucket results in only 8%
   of the total storage space being used by zero deltas. Therefore, only in
   cases more dominated by rarely changing buckets would a run-length encoding
