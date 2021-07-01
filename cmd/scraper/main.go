@@ -123,7 +123,7 @@ func Scrape(url string) {
 		if mf.GetType() == dto.MetricType_HISTOGRAM {
 			for _, m := range mf.GetMetric() {
 				h := m.GetHistogram()
-				if h.GetSbResolution() > 0 {
+				if h.GetSbZeroThreshold() > 0 {
 					key := fmt.Sprint(mf.GetName(), m.GetLabel())
 					fmt.Println("### Found sparse histogram:", key)
 					buf, err := proto.Marshal(h)

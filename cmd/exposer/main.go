@@ -19,7 +19,7 @@ import (
 var (
 	addr          = flag.String("listen-address", ":8080", "address to listen on for HTTP requests")
 	dataset       = flag.String("dataset", "", "input file to read datasat from")
-	resolution    = flag.Uint("resolution", 20, "sparse buckets resolution per power of 10, must be ≤255")
+	factor        = flag.Float64("factor", 1.1, "each bucket is by this factor wider than the previous one, must be greater 1")
 	zeroThreshold = flag.Float64("zero-threshold", 1e-128, "width of the “zero” bucket")
 	timeFactor    = flag.Float64("time-factor", 0, "how fast to run the time simulation, 0 results in ingesting all observations as fast as possible")
 )
@@ -29,7 +29,7 @@ func observe(in io.Reader) {
 		his = promauto.NewHistogram(prometheus.HistogramOpts{
 			Name:                       "histogram_experiment",
 			Help:                       "Test histogram for an experiment.",
-			SparseBucketsResolution:    uint8(*resolution),
+			SparseBucketsFactor:        *factor,
 			SparseBucketsZeroThreshold: *zeroThreshold,
 		})
 		s              = bufio.NewScanner(in)
@@ -76,8 +76,8 @@ func observe(in io.Reader) {
 
 func main() {
 	flag.Parse()
-	if *resolution > 255 {
-		log.Fatalln("--resolution greater 255 not allowed, provided value:", *resolution)
+	if *factor <= 1 {
+		log.Fatalln("--factor must by greater than 1, provided value:", *factor)
 	}
 
 	http.Handle("/metrics", promhttp.Handler())
