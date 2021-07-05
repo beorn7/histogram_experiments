@@ -39,7 +39,7 @@ var (
 	his = promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
 		Name:                "story_observations",
 		Help:                "Values observed during the story.",
-		SparseBucketsFactor: 1.05,
+		SparseBucketsFactor: 1.03,
 	})
 	aTaleOfLatencies = story{
 		// This story is meant for a ~5min demo (but keeps running for
@@ -47,7 +47,7 @@ var (
 		// scrape interval and do rates over 5s.
 		{
 			title:    "Low traffic",
-			duration: time.Minute,
+			duration: 45 * time.Second,
 			sources: []source{
 				{
 					durationBetweenRequestsMean:   15 * time.Millisecond, // 67 qps
@@ -58,8 +58,32 @@ var (
 			},
 		},
 		{
+			title:    "Transition to increased traffic, with slightly increased latency",
+			duration: 15 * time.Second,
+			sources: []source{
+				{
+					durationBetweenRequestsMean:   13 * time.Millisecond, // 100 qps
+					durationBetweenRequestsStdDev: 2 * time.Millisecond,
+					observedValueMean:             0.27,
+					observedValueStdDev:           0.03,
+				},
+			},
+		},
+		{
+			title:    "Transition to increased traffic, with slightly increased latency",
+			duration: 15 * time.Second,
+			sources: []source{
+				{
+					durationBetweenRequestsMean:   11 * time.Millisecond, // 100 qps
+					durationBetweenRequestsStdDev: 2 * time.Millisecond,
+					observedValueMean:             0.29,
+					observedValueStdDev:           0.03,
+				},
+			},
+		},
+		{
 			title:    "Increased traffic, with slightly increased latency",
-			duration: time.Minute,
+			duration: 45 * time.Second,
 			sources: []source{
 				{
 					durationBetweenRequestsMean:   10 * time.Millisecond, // 100 qps
@@ -70,17 +94,17 @@ var (
 			},
 		},
 		{
-			title:    "A successfull canary (10% of traffic), lower but less predictable latency",
+			title:    "A successfull canary (20% of traffic), lower but less predictable latency",
 			duration: 30 * time.Second,
 			sources: []source{
 				{
-					durationBetweenRequestsMean:   11 * time.Millisecond, // 90 qps
+					durationBetweenRequestsMean:   13 * time.Millisecond, // 80 qps
 					durationBetweenRequestsStdDev: 2 * time.Millisecond,
 					observedValueMean:             0.3, // 300ms
 					observedValueStdDev:           0.03,
 				},
 				{
-					durationBetweenRequestsMean:   100 * time.Millisecond, // 10 qps
+					durationBetweenRequestsMean:   50 * time.Millisecond, // 20 qps
 					durationBetweenRequestsStdDev: 20 * time.Millisecond,
 					observedValueMean:             0.20, // 200ms
 					observedValueStdDev:           0.05,
