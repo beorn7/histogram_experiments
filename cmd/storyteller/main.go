@@ -1,9 +1,14 @@
 package main
 
 import (
+	"image"
+	"image/color"
+	"image/png"
 	"log"
+	"math"
 	"math/rand"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -31,6 +36,14 @@ type (
 		durationBetweenRequestsStdDev time.Duration
 		observedValueMean             float64
 		observedValueStdDev           float64
+		// If image is not nil, all other values are ignored. The x axis
+		// of the image is mapped to the duration of the story, each x
+		// pixel corresponding to the total duration divided by the
+		// number of pixels along the x axis. Observations are then
+		// conducted with a frequency according to the gray value of
+		// each pixel at a given X value, with the observed value being
+		// 2^(Y/maxY) and at most 255 observations per value.
+		image image.Image
 	}
 )
 
@@ -39,7 +52,7 @@ var (
 	his = promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
 		Name:                "story_observations",
 		Help:                "Values observed during the story.",
-		SparseBucketsFactor: 1.03,
+		SparseBucketsFactor: 1.005,
 	})
 	aTaleOfLatencies = story{
 		// This story is meant for a ~5min demo (but keeps running for
@@ -204,37 +217,87 @@ func tellStory(s story) {
 		end := make(chan struct{})
 		time.AfterFunc(c.duration, func() { close(end) })
 		for _, src := range c.sources {
-			go func(src source, end chan struct{}) {
-				for {
-					d := time.Duration(
-						rand.NormFloat64()*
-							float64(src.durationBetweenRequestsStdDev) +
-							float64(src.durationBetweenRequestsMean),
-					)
-					t := time.NewTimer(d)
-					select {
-					case <-t.C:
-						o := rand.NormFloat64()*
-							src.observedValueStdDev +
-							src.observedValueMean
-						if !c.allowNegativeObservations && o < 0 {
-							o = 0
-						}
-						his.Observe(o)
-					case <-end:
-						t.Stop()
-						return
-					}
-				}
-			}(src, end)
+			go src.run(end, c.duration, c.allowNegativeObservations)
 		}
 		<-end
 	}
 	log.Println("The end.")
 }
 
+func (src source) run(end chan struct{}, duration time.Duration, allowNegativeObservations bool) {
+	if src.image != nil {
+		src.runImage(duration)
+		return
+	}
+	src.runNorm(end, allowNegativeObservations)
+}
+
+func (src source) runNorm(end chan struct{}, allowNegativeObservations bool) {
+	for {
+		d := time.Duration(
+			rand.NormFloat64()*
+				float64(src.durationBetweenRequestsStdDev) +
+				float64(src.durationBetweenRequestsMean),
+		)
+		t := time.NewTimer(d)
+		select {
+		case <-t.C:
+			o := rand.NormFloat64()*
+				src.observedValueStdDev +
+				src.observedValueMean
+			if !allowNegativeObservations && o < 0 {
+				o = 0
+			}
+			his.Observe(o)
+		case <-end:
+			t.Stop()
+			return
+		}
+	}
+}
+
+func (src source) runImage(duration time.Duration) {
+	bounds := src.image.Bounds()
+	ticker := time.NewTicker(duration / time.Duration(bounds.Max.X-bounds.Min.X))
+	defer ticker.Stop()
+	for x := bounds.Min.X; x < bounds.Max.X; x++ {
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			pixel := src.image.At(x, y)
+			gray := color.GrayModel.Convert(pixel).(color.Gray).Y
+			value := math.Exp2(float64(bounds.Max.Y-y) / float64(bounds.Max.Y))
+			for i := gray; i > 0; i-- {
+				his.Observe(value)
+			}
+		}
+		<-ticker.C
+	}
+}
+
 func main() {
-	go tellStory(aTaleOfLatencies)
+	// go tellStory(aTaleOfLatencies)
+
+	f, err := os.Open("./prometheus.png")
+	if err != nil {
+		log.Fatal(err)
+	}
+	promImage, err := png.Decode(f)
+	if err != nil {
+		log.Fatal(err)
+	}
+	prometheusLogo := story{
+		chapter{
+			title:    "The Prometheus logo",
+			duration: 5 * time.Minute,
+			sources: []source{
+				{
+					image: promImage,
+				},
+			},
+		},
+	}
+
+	go tellStory(prometheusLogo)
+
 	http.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 	log.Println("Serving metrics, SIGTERM to abort…")
 	http.ListenAndServe(":8080", nil)
