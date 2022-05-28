@@ -52,7 +52,7 @@ var (
 	his = promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
 		Name:                "story_observations",
 		Help:                "Values observed during the story.",
-		SparseBucketsFactor: 1.005,
+		SparseBucketsFactor: 1.01,
 	})
 	aTaleOfLatencies = story{
 		// This story is meant for a ~5min demo (but keeps running for
@@ -264,7 +264,7 @@ func (src source) runImage(duration time.Duration) {
 		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 			pixel := src.image.At(x, y)
 			gray := color.GrayModel.Convert(pixel).(color.Gray).Y
-			value := math.Exp2(float64(bounds.Max.Y-y) / float64(bounds.Max.Y))
+			value := math.Exp2((float64(bounds.Max.Y-y) - rand.Float64()) / float64(bounds.Max.Y))
 			for i := gray; i > 0; i-- {
 				his.Observe(value)
 			}
@@ -277,6 +277,8 @@ func main() {
 	// go tellStory(aTaleOfLatencies)
 
 	f, err := os.Open("./prometheus.png")
+	// f, err := os.Open("./grafana.png")
+	// f, err := os.Open("./rickroll.png")
 	if err != nil {
 		log.Fatal(err)
 	}
