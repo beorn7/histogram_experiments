@@ -3,12 +3,10 @@ package main
 import (
 	"image"
 	"image/color"
-	"image/png"
 	"log"
 	"math"
 	"math/rand"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -52,6 +50,7 @@ var (
 	his = promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
 		Name:                        "request_duration_seconds",
 		Help:                        "Latencies observed during the story.",
+		Buckets:                     prometheus.DefBuckets,
 		NativeHistogramBucketFactor: 1.1,
 	})
 	aTaleOfLatencies = story{
@@ -274,31 +273,31 @@ func (src source) runImage(duration time.Duration) {
 }
 
 func main() {
-	// go tellStory(aTaleOfLatencies)
+	go tellStory(aTaleOfLatencies)
 
-	f, err := os.Open("./prometheus.png")
+	// f, err := os.Open("./prometheus.png")
 	// f, err := os.Open("./grafana.png")
 	// f, err := os.Open("./rickroll.png")
-	if err != nil {
-		log.Fatal(err)
-	}
-	promImage, err := png.Decode(f)
-	if err != nil {
-		log.Fatal(err)
-	}
-	prometheusLogo := story{
-		chapter{
-			title:    "The Prometheus logo",
-			duration: 5 * time.Minute,
-			sources: []source{
-				{
-					image: promImage,
-				},
-			},
-		},
-	}
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// promImage, err := png.Decode(f)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// prometheusLogo := story{
+	// 	chapter{
+	// 		title:    "The Prometheus logo",
+	// 		duration: 5 * time.Minute,
+	// 		sources: []source{
+	// 			{
+	// 				image: promImage,
+	// 			},
+	// 		},
+	// 	},
+	// }
 
-	go tellStory(prometheusLogo)
+	// go tellStory(prometheusLogo)
 
 	http.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 	log.Println("Serving metrics, SIGTERM to abort…")
