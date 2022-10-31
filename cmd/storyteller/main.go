@@ -47,11 +47,9 @@ type (
 
 var (
 	reg = prometheus.NewRegistry()
-	his = promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
-		Name:                        "request_duration_seconds",
-		Help:                        "Latencies observed during the story.",
-		Buckets:                     prometheus.DefBuckets,
-		NativeHistogramBucketFactor: 1.1,
+	his = promauto.With(reg).NewCounter(prometheus.CounterOpts{
+		Name: "request_duration_seconds",
+		Help: "Latencies observed during the story.",
 	})
 	aTaleOfLatencies = story{
 		// This story is meant for a ~5min demo (but keeps running for
@@ -247,7 +245,7 @@ func (src source) runNorm(end chan struct{}, allowNegativeObservations bool) {
 			if !allowNegativeObservations && o < 0 {
 				o = 0
 			}
-			his.Observe(o)
+			his.Add(o)
 		case <-end:
 			t.Stop()
 			return
@@ -265,7 +263,7 @@ func (src source) runImage(duration time.Duration) {
 			gray := color.GrayModel.Convert(pixel).(color.Gray).Y
 			value := math.Exp2((float64(bounds.Max.Y-y) - rand.Float64()) / float64(bounds.Max.Y))
 			for i := gray; i > 0; i-- {
-				his.Observe(value)
+				his.Add(value)
 			}
 		}
 		<-ticker.C
@@ -301,5 +299,5 @@ func main() {
 
 	http.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 	log.Println("Serving metrics, SIGTERM to abort…")
-	http.ListenAndServe(":8080", nil)
+	http.ListenAndServe(":8082", nil)
 }
