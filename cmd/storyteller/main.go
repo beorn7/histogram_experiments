@@ -50,8 +50,8 @@ type (
 var (
 	reg = prometheus.NewRegistry()
 	his = promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
-		Name:                        "story_observations",
-		Help:                        "Values observed during the story.",
+		Name:                        "request_duration_seconds",
+		Help:                        "Latencies observed during the story.",
 		NativeHistogramBucketFactor: 1.1,
 	})
 	aTaleOfLatencies = story{
