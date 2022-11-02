@@ -301,5 +301,5 @@ func main() {
 
 	http.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 	log.Println("Serving metrics, SIGTERM to abort…")
-	http.ListenAndServe(":8080", nil)
+	log.Println(http.ListenAndServe(":8080", nil))
 }
