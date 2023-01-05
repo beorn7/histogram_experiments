@@ -19,11 +19,10 @@ var (
 	addr          = flag.String("listen-address", ":8080", "address to listen on for HTTP requests")
 	factor        = flag.Float64("factor", 1.1, "each bucket is by this factor wider than the previous one, must be greater 1")
 	zeroThreshold = flag.Float64("zero-threshold", 0.1, "width of the “zero” bucket")
-
-	reg = prometheus.NewRegistry()
 )
 
-func observe() {
+func observe(reg prometheus.Registerer) {
+	// TODO: simulate occasional counter resets.
 	var (
 		his = promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
 			Name:                         "integer_counter_histogram",
@@ -58,17 +57,29 @@ func (g *WrappingGatherer) Gather() ([]*dto.MetricFamily, error) {
 	floatGauge.Type = dto.MetricType_GAUGE_HISTOGRAM.Enum()
 	integerGauge.Type = dto.MetricType_GAUGE_HISTOGRAM.Enum()
 
-	iH := *integerCounter.Metric[0].Histogram
-	fH := iH
-	fH.SampleCountFloat = proto.Float64(float64(*iH.SampleCount) / 2)
+	fH := *integerCounter.Metric[0].Histogram
+	fH.SampleCountFloat = proto.Float64(float64(*fH.SampleCount) / 2)
 	fH.SampleCount = nil
-	fH.SampleSum = proto.Float64(*iH.SampleSum / 2)
+	fH.SampleSum = proto.Float64(*fH.SampleSum / 2)
+	fH.ZeroCountFloat = proto.Float64(float64(*fH.ZeroCount) / 2)
+	fH.ZeroCount = nil
+
+	var currentCount int64
+	for _, d := range fH.PositiveDelta {
+		currentCount += d
+		fH.PositiveCount = append(fH.PositiveCount, float64(currentCount)/2)
+	}
+	fH.PositiveDelta = nil
+	currentCount = 0
+	for _, d := range fH.NegativeDelta {
+		currentCount += d
+		fH.NegativeCount = append(fH.NegativeCount, float64(currentCount)/2)
+	}
+	fH.NegativeDelta = nil
 
 	metric := *integerCounter.Metric[0]
 	metrics := []*dto.Metric{&metric}
 	metric.Histogram = &fH
-
-	// TODO adjust buckets
 
 	floatCounter.Metric = metrics
 	floatGauge.Metric = metrics
@@ -79,9 +90,11 @@ func (g *WrappingGatherer) Gather() ([]*dto.MetricFamily, error) {
 
 func main() {
 	flag.Parse()
+
+	reg := prometheus.NewRegistry()
 	http.Handle("/metrics", promhttp.HandlerFor(&WrappingGatherer{reg}, promhttp.HandlerOpts{}))
 
-	go observe()
+	go observe(reg)
 
 	log.Println("Serving metrics, SIGTERM to abort…")
 	http.ListenAndServe(*addr, nil)
